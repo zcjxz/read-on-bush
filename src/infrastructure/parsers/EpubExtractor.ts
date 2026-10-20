@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { unzipSync } from 'fflate';
+import { assertEpubArchiveSize, unzipEpubWithLimits } from './EpubSafety';
 import { XMLParser } from 'fast-xml-parser';
 import type {
   ChapterRef,
@@ -91,6 +91,15 @@ const contentParser = new XMLParser({
   trimValues: false
 });
 
+/** Bound the compressed file size before allocating a Buffer for its contents. */
+async function readLimitedEpubFile(filePath: string): Promise<Uint8Array> {
+  const stat = await fs.promises.stat(filePath);
+  assertEpubArchiveSize(stat.size);
+  const bytes = await fs.promises.readFile(filePath);
+  assertEpubArchiveSize(bytes.byteLength);
+  return bytes;
+}
+
 function asArray<T>(value: T | T[] | undefined | null): T[] {
   if (value === undefined || value === null) {
     return [];
@@ -137,7 +146,7 @@ class ZipReader {
   private readonly lowerKeys: Map<string, string>;
 
   constructor(buffer: Uint8Array) {
-    const unzipped = unzipSync(buffer);
+    const unzipped = unzipEpubWithLimits(buffer);
     this.entries = new Map();
     this.lowerKeys = new Map();
     for (const [key, value] of Object.entries(unzipped)) {
@@ -616,7 +625,7 @@ function matchChapterTitle(
 }
 
 export async function extractEpub(filePath: string): Promise<EpubExtraction> {
-  const buffer = await fs.promises.readFile(filePath);
+  const buffer = await readLimitedEpubFile(filePath);
   const zip = new ZipReader(buffer);
 
   const containerXml = zip.read('META-INF/container.xml');
@@ -684,7 +693,7 @@ export async function readEpubImageBytes(
   filePath: string,
   zipPath: string
 ): Promise<Uint8Array | undefined> {
-  const buffer = await fs.promises.readFile(filePath);
+  const buffer = await readLimitedEpubFile(filePath);
   const zip = new ZipReader(buffer);
   return zip.readBytes(zipPath);
 }
